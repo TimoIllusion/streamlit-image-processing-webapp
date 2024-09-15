@@ -1,3 +1,5 @@
+# app.py
+
 import streamlit as st
 import cv2
 import numpy as np
@@ -5,105 +7,95 @@ import tempfile
 import os
 import logging
 from zipfile import ZipFile
-from abc import ABC, abstractmethod
+
 from moviepy.editor import VideoFileClip
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Ensure imageio uses system ffmpeg
+os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
 
-# Define a class to process frames and keep track of progress
-class FrameProcessor:
-    def __init__(self, model_instance, total_frames, progress_bar):
-        self.model_instance = model_instance
-        self.total_frames = total_frames
-        self.progress_bar = progress_bar
-        self.frame_count = 0
-
-    def process(self, frame):
-        # Convert frame from RGB to BGR for OpenCV processing
-        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        processed_frame_bgr = self.model_instance.execute(frame_bgr)
-        # Convert back to RGB for moviepy
-        processed_frame_rgb = cv2.cvtColor(processed_frame_bgr, cv2.COLOR_BGR2RGB)
-        # Update progress bar
-        self.frame_count += 1
-        progress = min(self.frame_count / self.total_frames, 1.0)
-        self.progress_bar.progress(progress)
-        return processed_frame_rgb
+from models import ModelA, ModelB, ModelC
+from frame_processor import FrameProcessor
 
 
-class ImageProcessor(ABC):
-    def __init__(self, params):
-        self.params = params
-        self.setup()
+def process_images(uploaded_files, model_instance):
+    logger.info("Processing images")
+    processed_images = []
+    total_images = len(uploaded_files)
+    progress_bar = st.progress(0)
+    for idx, uploaded_file in enumerate(uploaded_files):
+        logger.info(f"Processing image {idx + 1}/{total_images}")
+        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, 1)
+        processed_image = model_instance.execute(image)
+        processed_images.append((uploaded_file.name, processed_image))
+        progress_bar.progress((idx + 1) / total_images)
+    progress_bar.empty()
+    return processed_images
 
-    @abstractmethod
-    def setup(self): ...
 
-    @abstractmethod
-    def execute(self, image): ...
+def process_video(uploaded_file, model_instance, bitrate):
+    logger.info("Processing video")
+    tfile = tempfile.NamedTemporaryFile(delete=False)
+    tfile.write(uploaded_file.read())
+    tfile.flush()
+    tfile.close()
 
+    # Define the output video path
+    temp_video_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    video_path = temp_video_file.name
 
-# Model A
-class ModelA(ImageProcessor):
-    def setup(self):
-        # Any setup specific to Model A
-        logger.info("Setting up Model A")
+    # Use VideoFileClip for on-the-fly processing
+    with st.spinner("Processing video..."):
+        clip = VideoFileClip(tfile.name)
 
-    def execute(self, image):
-        color = self.params.get("color", (0, 255, 0))
-        processed_image = image.copy()
-        height, width = processed_image.shape[:2]
-        cv2.rectangle(
-            processed_image,
-            (int(width * 0.25), int(height * 0.25)),
-            (int(width * 0.75), int(height * 0.75)),
-            color,
-            5,
+        # Get total frames using clip.reader.nframes
+        total_frames = clip.reader.nframes
+        if total_frames is None or total_frames == 0:
+            total_frames = int(clip.fps * clip.duration)
+
+        progress_bar = st.progress(0)
+
+        frame_processor = FrameProcessor(model_instance, total_frames, progress_bar)
+
+        processed_clip = clip.fl_image(frame_processor.process)
+        processed_clip.write_videofile(
+            video_path,
+            codec="libx264",
+            audio=False,
+            bitrate=f"{bitrate}k" if bitrate else None,
+            verbose=False,
+            logger=None,
         )
-        return processed_image
+        progress_bar.empty()
+        clip.close()
+        processed_clip.close()
+
+    # Read the video file and store in session state
+    with open(video_path, "rb") as video_file:
+        video_bytes = video_file.read()
+
+    # Clean up temporary files
+    os.remove(video_path)
+    os.remove(tfile.name)
+
+    return video_bytes
 
 
-# Model B
-class ModelB(ImageProcessor):
-    def setup(self):
-        # Any setup specific to Model B
-        logger.info("Setting up Model B")
-
-    def execute(self, image):
-        color = self.params.get("color", (255, 0, 0))
-        processed_image = image.copy()
-        height, width = processed_image.shape[:2]
-        cv2.rectangle(
-            processed_image,
-            (int(width * 0.10), int(height * 0.10)),
-            (int(width * 0.90), int(height * 0.90)),
-            color,
-            5,
-        )
-        return processed_image
-
-
-# Model C
-class ModelC(ImageProcessor):
-    def setup(self):
-        # Any setup specific to Model C
-        logger.info("Setting up Model C")
-
-    def execute(self, image):
-        color = self.params.get("color", (0, 0, 255))
-        processed_image = image.copy()
-        height, width = processed_image.shape[:2]
-        cv2.rectangle(
-            processed_image,
-            (int(width * 0.40), int(height * 0.40)),
-            (int(width * 0.60), int(height * 0.60)),
-            color,
-            5,
-        )
-        return processed_image
+def save_images_to_zip(processed_images):
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        zip_path = os.path.join(tmpdirname, "processed_images.zip")
+        with ZipFile(zip_path, "w") as zipObj:
+            for name, img in processed_images:
+                img_path = os.path.join(tmpdirname, name)
+                cv2.imwrite(img_path, img)
+                zipObj.write(img_path, arcname=name)
+        with open(zip_path, "rb") as fp:
+            zip_bytes = fp.read()
+    return zip_bytes
 
 
 def main():
@@ -192,32 +184,11 @@ def main():
                 return
 
             if media_type == "Images":
-                logger.info("Processing images")
-                processed_images = []
-                total_images = len(uploaded_files)
-                progress_bar = st.progress(0)
-                for idx, uploaded_file in enumerate(uploaded_files):
-                    logger.info(f"Processing image {idx + 1}/{total_images}")
-                    file_bytes = np.asarray(
-                        bytearray(uploaded_file.read()), dtype=np.uint8
-                    )
-                    image = cv2.imdecode(file_bytes, 1)
-                    processed_image = model_instance.execute(image)
-                    processed_images.append((uploaded_file.name, processed_image))
-                    progress_bar.progress((idx + 1) / total_images)
-                progress_bar.empty()
+                processed_images = process_images(uploaded_files, model_instance)
                 st.session_state["processed_images"] = processed_images
 
                 # Save processed images to a zip file and store in session state
-                with tempfile.TemporaryDirectory() as tmpdirname:
-                    zip_path = os.path.join(tmpdirname, "processed_images.zip")
-                    with ZipFile(zip_path, "w") as zipObj:
-                        for name, img in processed_images:
-                            img_path = os.path.join(tmpdirname, name)
-                            cv2.imwrite(img_path, img)
-                            zipObj.write(img_path, arcname=name)
-                    with open(zip_path, "rb") as fp:
-                        zip_bytes = fp.read()
+                zip_bytes = save_images_to_zip(processed_images)
                 st.session_state["zip_bytes"] = zip_bytes
 
                 # Display images
@@ -235,55 +206,8 @@ def main():
                     mime="application/zip",
                 )
             else:
-                logger.info("Processing video")
-                uploaded_file = uploaded_files[0]
-                tfile = tempfile.NamedTemporaryFile(delete=False)
-                tfile.write(uploaded_file.read())
-                tfile.flush()
-                tfile.close()
-
-                # Define the output video path
-                temp_video_file = tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".mp4"
-                )
-                video_path = temp_video_file.name
-
-                # Use VideoFileClip for on-the-fly processing
-                with st.spinner("Processing video..."):
-                    clip = VideoFileClip(tfile.name)
-
-                    # Get total frames using clip.reader.nframes
-                    total_frames = clip.reader.nframes
-                    if total_frames is None or total_frames == 0:
-                        total_frames = int(clip.fps * clip.duration)
-
-                    progress_bar = st.progress(0)
-
-                    frame_processor = FrameProcessor(
-                        model_instance, total_frames, progress_bar
-                    )
-
-                    processed_clip = clip.fl_image(frame_processor.process)
-                    processed_clip.write_videofile(
-                        video_path,
-                        codec="libx264",
-                        audio=False,
-                        bitrate=f"{bitrate}k" if bitrate else None,
-                        verbose=False,
-                        logger=None,
-                    )
-                    progress_bar.empty()
-                    clip.close()
-                    processed_clip.close()
-
-                # Read the video file and store in session state
-                with open(video_path, "rb") as video_file:
-                    video_bytes = video_file.read()
+                video_bytes = process_video(uploaded_files[0], model_instance, bitrate)
                 st.session_state["video_bytes"] = video_bytes
-
-                # Clean up temporary files
-                os.remove(video_path)
-                os.remove(tfile.name)
 
                 # Display video
                 st.video(st.session_state["video_bytes"])

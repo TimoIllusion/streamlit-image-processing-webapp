@@ -17,8 +17,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the app code and config file
-COPY app.py .
-COPY .streamlit/config.toml .streamlit/config.toml
+COPY . .
 
 # Expose the port that Streamlit uses
 EXPOSE 8501
