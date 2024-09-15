@@ -1,13 +1,11 @@
-# app.py
-
-import streamlit as st
-import cv2
-import numpy as np
 import tempfile
 import os
 import logging
 from zipfile import ZipFile
 
+import streamlit as st
+import cv2
+import numpy as np
 from moviepy.editor import VideoFileClip
 
 # Set up logging
@@ -17,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Ensure imageio uses system ffmpeg
 os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
 
-from models import ModelA, ModelB, ModelC
+from models import ModelA, ModelB, ModelC, CustomModel
 from frame_processor import FrameProcessor
 
 
@@ -123,9 +121,22 @@ def main():
         # Model selection
         model_config = st.selectbox(
             "Select Image Processing Model Configuration",
-            ["Model A", "Model B", "Model C"],
+            ["Model A", "Model B", "Model C", "Custom Model"],
             key="model_config",
         )
+
+        # Custom model selection, if Cutom model is selected
+        if model_config == "Custom Model":
+            custom_model_cfg_file = st.file_uploader(
+                "Choose a custom model config file",
+                type=["py"],
+                accept_multiple_files=False,
+            )
+            custom_model_chckpoint_file = st.file_uploader(
+                "Choose a custom model checkpoint file",
+                type=["pth"],
+                accept_multiple_files=False,
+            )
 
         # Always display processing parameters (using 3 number inputs for color)
         st.subheader("Processing Parameters")
@@ -173,15 +184,20 @@ def main():
             params = {"color": color}
 
             # Instantiate the model class based on selection
-            if model_config == "Model A":
-                model_instance = ModelA(params)
-            elif model_config == "Model B":
-                model_instance = ModelB(params)
-            elif model_config == "Model C":
-                model_instance = ModelC(params)
-            else:
-                st.error("Invalid model selected.")
-                return
+            with st.spinner("Loading model..."):
+                if model_config == "Model A":
+                    model_instance = ModelA(params)
+                elif model_config == "Model B":
+                    model_instance = ModelB(params)
+                elif model_config == "Model C":
+                    model_instance = ModelC(params)
+                elif model_config == "Custom Model":
+                    params["checkpoint_file"] = custom_model_chckpoint_file
+                    params["config_file"] = custom_model_cfg_file
+                    model_instance = CustomModel(params)
+                else:
+                    st.error("Invalid model selected.")
+                    return
 
             if media_type == "Images":
                 processed_images = process_images(uploaded_files, model_instance)

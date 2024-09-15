@@ -1,5 +1,3 @@
-# frame_processor.py
-
 import cv2
 
 

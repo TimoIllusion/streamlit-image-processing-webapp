@@ -1,8 +1,8 @@
-# models.py
-
-import cv2
+import time
 import logging
 from abc import ABC, abstractmethod
+
+import cv2
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class ModelA(ImageProcessor):
     def setup(self):
         # Any setup specific to Model A
         logger.info("Setting up Model A")
+        time.sleep(2)
 
     def execute(self, image):
         color = self.params.get("color", (0, 255, 0))
@@ -44,6 +45,7 @@ class ModelB(ImageProcessor):
     def setup(self):
         # Any setup specific to Model B
         logger.info("Setting up Model B")
+        time.sleep(2)
 
     def execute(self, image):
         color = self.params.get("color", (255, 0, 0))
@@ -64,6 +66,7 @@ class ModelC(ImageProcessor):
     def setup(self):
         # Any setup specific to Model C
         logger.info("Setting up Model C")
+        time.sleep(2)
 
     def execute(self, image):
         color = self.params.get("color", (0, 0, 255))
@@ -73,6 +76,29 @@ class ModelC(ImageProcessor):
             processed_image,
             (int(width * 0.40), int(height * 0.40)),
             (int(width * 0.60), int(height * 0.60)),
+            color,
+            5,
+        )
+        return processed_image
+
+
+class CustomModel(ImageProcessor):
+
+    def setup(self):
+        # Any setup specific to Custom Model
+        logger.info("Setting up Custom Model")
+        time.sleep(2)
+        logger.info(self.params.get("checkpoint_file").name)
+        logger.info(self.params.get("config_file").name)
+
+    def execute(self, image):
+        color = self.params.get("color", (255, 255, 255))
+        processed_image = image.copy()
+        height, width = processed_image.shape[:2]
+        cv2.rectangle(
+            processed_image,
+            (int(width * 0.30), int(height * 0.30)),
+            (int(width * 0.70), int(height * 0.70)),
             color,
             5,
         )
