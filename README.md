@@ -40,3 +40,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Author
 
 - **Timo Leitritz**, 2024
+
+## AI Assistance
+
+Development of this project was supported by OpenAI's ChatGPT models (4o September 2024, o1-preview September 2024), which provided code suggestions and troubleshooting help.
