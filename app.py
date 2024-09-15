@@ -12,8 +12,26 @@ from moviepy.editor import VideoFileClip
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Ensure imageio uses system ffmpeg
-os.environ["IMAGEIO_FFMPEG_EXE"] = "/usr/bin/ffmpeg"
+
+# Define a class to process frames and keep track of progress
+class FrameProcessor:
+    def __init__(self, model_instance, total_frames, progress_bar):
+        self.model_instance = model_instance
+        self.total_frames = total_frames
+        self.progress_bar = progress_bar
+        self.frame_count = 0
+
+    def process(self, frame):
+        # Convert frame from RGB to BGR for OpenCV processing
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        processed_frame_bgr = self.model_instance.execute(frame_bgr)
+        # Convert back to RGB for moviepy
+        processed_frame_rgb = cv2.cvtColor(processed_frame_bgr, cv2.COLOR_BGR2RGB)
+        # Update progress bar
+        self.frame_count += 1
+        progress = min(self.frame_count / self.total_frames, 1.0)
+        self.progress_bar.progress(progress)
+        return processed_frame_rgb
 
 
 class ImageProcessor(ABC):
@@ -112,7 +130,7 @@ def main():
 
         # Model selection
         model_config = st.selectbox(
-            "Select AI Model Configuration",
+            "Select Image Processing Model Configuration",
             ["Model A", "Model B", "Model C"],
             key="model_config",
         )
@@ -158,7 +176,6 @@ def main():
             st.session_state["media_type"] = media_type
             st.session_state.pop("processed_images", None)
             st.session_state.pop("video_bytes", None)
-            st.session_state.pop("first_frame", None)
             st.session_state.pop("zip_bytes", None)
 
             params = {"color": color}
@@ -225,33 +242,37 @@ def main():
                 tfile.flush()
                 tfile.close()
 
-                # Use VideoFileClip for on-the-fly processing
-                def process_frame(frame):
-                    # Convert frame from RGB to BGR for OpenCV processing
-                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    processed_frame_bgr = model_instance.execute(frame_bgr)
-                    # Convert back to RGB for moviepy
-                    processed_frame_rgb = cv2.cvtColor(
-                        processed_frame_bgr, cv2.COLOR_BGR2RGB
-                    )
-                    return processed_frame_rgb
-
+                # Define the output video path
                 temp_video_file = tempfile.NamedTemporaryFile(
                     delete=False, suffix=".mp4"
                 )
                 video_path = temp_video_file.name
 
+                # Use VideoFileClip for on-the-fly processing
                 with st.spinner("Processing video..."):
                     clip = VideoFileClip(tfile.name)
-                    st.session_state["first_frame"] = clip.get_frame(0)
-                    processed_clip = clip.fl_image(process_frame)
+
+                    # Get total frames using clip.reader.nframes
+                    total_frames = clip.reader.nframes
+                    if total_frames is None or total_frames == 0:
+                        total_frames = int(clip.fps * clip.duration)
+
+                    progress_bar = st.progress(0)
+
+                    frame_processor = FrameProcessor(
+                        model_instance, total_frames, progress_bar
+                    )
+
+                    processed_clip = clip.fl_image(frame_processor.process)
                     processed_clip.write_videofile(
                         video_path,
                         codec="libx264",
                         audio=False,
                         bitrate=f"{bitrate}k" if bitrate else None,
-                        verbose=True,
+                        verbose=False,
+                        logger=None,
                     )
+                    progress_bar.empty()
                     clip.close()
                     processed_clip.close()
 
@@ -265,9 +286,6 @@ def main():
                 os.remove(tfile.name)
 
                 # Display video
-                st.image(
-                    st.session_state["first_frame"], caption="First Processed Frame"
-                )
                 st.video(st.session_state["video_bytes"])
 
                 # Download button for video
@@ -296,9 +314,6 @@ def main():
                     mime="application/zip",
                 )
             else:
-                st.image(
-                    st.session_state["first_frame"], caption="First Processed Frame"
-                )
                 st.video(st.session_state["video_bytes"])
                 # Download button for video
                 st.download_button(
